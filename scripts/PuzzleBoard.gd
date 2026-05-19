@@ -1,3 +1,4 @@
+class_name PuzzleBoard
 extends Node
 ## Core puzzle logic: tile state, shuffling, move validation, win detection.
 ## Instantiated and owned by Game.gd.
