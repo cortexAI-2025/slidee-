@@ -133,7 +133,6 @@ jobs:
 
       - name: Export APK with Godot
         run: |
-          # Export to a _raw file; we will re-sign it ourselves in the next step.
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             EXPORT_CMD="--export-release"
           else
@@ -146,10 +145,69 @@ jobs:
           test -f "${{ env.APK_RAW }}" || (echo "ERROR: APK not produced by Godot" && exit 1)
           ls -lh "${{ env.APK_RAW }}"
 
-      # ── 8. Zipalign + sign with apksigner ─────────────────────────────────────
-      # Godot's internal signing can be unreliable in headless CI mode.
-      # We always re-sign explicitly: zipalign first (mandatory before V2/V3
-      # signing), then apksigner which embeds a V1+V2+V3 signature block.
+      # ── 8. Patch AndroidManifest.xml via apktool ──────────────────────────────
+      # Godot 4 headless export does NOT inject permissions from export_presets.cfg
+      # into the APK manifest. We decode the APK with apktool, add the required
+      # <uses-permission> elements with a Python script, then rebuild.
+
+      - name: Install apktool
+        run: |
+          APKTOOL_VER="2.9.3"
+          wget -q \
+            "https://github.com/iBotPeaches/Apktool/releases/download/v${APKTOOL_VER}/apktool_${APKTOOL_VER}.jar" \
+            -O /usr/local/bin/apktool.jar
+          printf '#!/usr/bin/env bash\nexec java -jar /usr/local/bin/apktool.jar "$@"\n' \
+            > /usr/local/bin/apktool
+          chmod +x /usr/local/bin/apktool
+          apktool --version
+
+      - name: Decode APK
+        run: apktool d "${{ env.APK_RAW }}" -o /tmp/apk_src --no-src -f
+
+      - name: Patch manifest permissions
+        run: |
+          python3 - << 'PYEOF'
+          import xml.etree.ElementTree as ET
+
+          MANIFEST = "/tmp/apk_src/AndroidManifest.xml"
+          NS = "http://schemas.android.com/apk/res/android"
+          ET.register_namespace("android", NS)
+
+          PERMS = [
+              # Gallery — Android 13+ (API 33+)
+              {"name": "android.permission.READ_MEDIA_IMAGES"},
+              # Gallery — Android ≤ 12 (maxSdkVersion avoids Play Store warnings on 13+)
+              {"name": "android.permission.READ_EXTERNAL_STORAGE", "maxSdkVersion": "32"},
+              # Camera
+              {"name": "android.permission.CAMERA"},
+          ]
+
+          tree = ET.parse(MANIFEST)
+          root = tree.getroot()
+
+          existing = {el.get(f"{{{NS}}}name") for el in root.findall("uses-permission")}
+
+          for p in PERMS:
+              if p["name"] in existing:
+                  print(f"  already present: {p['name']}")
+                  continue
+              el = ET.SubElement(root, "uses-permission")
+              el.set(f"{{{NS}}}name", p["name"])
+              if "maxSdkVersion" in p:
+                  el.set(f"{{{NS}}}maxSdkVersion", p["maxSdkVersion"])
+              print(f"  added: {p['name']}")
+
+          tree.write(MANIFEST, xml_declaration=True, encoding="utf-8")
+          print("Done.")
+          PYEOF
+
+          echo "=== Final permissions in manifest ==="
+          grep "uses-permission" /tmp/apk_src/AndroidManifest.xml
+
+      - name: Rebuild APK
+        run: apktool b /tmp/apk_src -o "${{ env.APK_RAW }}" -f
+
+      # ── 9. Zipalign + sign with apksigner ─────────────────────────────────────
 
       - name: Zipalign
         run: |

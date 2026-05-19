@@ -4,6 +4,7 @@ extends Control
 
 const SCENE_DIFFICULTY = "res://scenes/Difficulty.tscn"
 const SCENE_GAME       = "res://scenes/Game.tscn"
+const SCENE_CAMERA     = "res://scenes/Camera.tscn"
 
 const COL_BG      = Color(0.051, 0.067, 0.09, 1)
 const COL_PRIMARY = Color(0.306, 0.8,   0.769, 1)   # #4ECDC4
@@ -25,10 +26,12 @@ func _ready() -> void:
 	_picker.image_ready.connect(_on_image_ready)
 	_picker.cancelled.connect(_on_picker_cancelled)
 
-	# Request media permissions early so the system dialog appears at launch
-	# rather than when the user taps the button.
+	# Request all required permissions up-front so the system dialog appears
+	# at launch rather than blocking the first user interaction.
 	if OS.get_name() == "Android":
-		OS.request_permissions()
+		OS.request_permission("android.permission.READ_MEDIA_IMAGES")
+		OS.request_permission("android.permission.READ_EXTERNAL_STORAGE")
+		OS.request_permission("android.permission.CAMERA")
 
 # ── UI construction ────────────────────────────────────────────────────────────
 
@@ -73,13 +76,19 @@ func _build_ui() -> void:
 	spacer.custom_minimum_size = Vector2(0, 60)
 	vbox.add_child(spacer)
 
-	# SELECT IMAGE button
+	# SELECT IMAGE button (gallery)
 	var btn = _make_button("  Select Image  ", COL_PRIMARY, Color(0.05, 0.05, 0.05))
 	btn.custom_minimum_size = Vector2(540, 120)
 	btn.pressed.connect(_on_select_pressed)
 	vbox.add_child(btn)
 
-	# Best scores button (secondary)
+	# TAKE PHOTO button (camera)
+	var cam_btn = _make_button("  Take Photo  ", COL_CORAL, Color(0.05, 0.05, 0.05))
+	cam_btn.custom_minimum_size = Vector2(540, 120)
+	cam_btn.pressed.connect(_on_camera_pressed)
+	vbox.add_child(cam_btn)
+
+	# Best scores button (tertiary / small)
 	var scores_btn = _make_button("Best Scores", COL_SURFACE, COL_TEXT)
 	scores_btn.custom_minimum_size = Vector2(360, 90)
 	scores_btn.pressed.connect(_on_scores_pressed)
@@ -172,11 +181,11 @@ func _make_button(label_text: String, bg: Color, fg: Color) -> Button:
 # ── Event handlers ─────────────────────────────────────────────────────────────
 
 func _on_select_pressed() -> void:
-	if OS.get_name() == "Android":
-		_set_status("Opening gallery…  (grant access if prompted)")
-	else:
-		_set_status("Opening gallery…")
+	_set_status("Opening gallery…")
 	_picker.pick_image()
+
+func _on_camera_pressed() -> void:
+	get_tree().change_scene_to_file(SCENE_CAMERA)
 
 func _on_picker_cancelled() -> void:
 	_set_status("")
