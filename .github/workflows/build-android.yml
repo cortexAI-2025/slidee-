@@ -79,21 +79,23 @@ jobs:
              ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
 
       # ── 5. Keystore ──────────────────────────────────────────────────────────
-      # For release builds: store your keystore as a GitHub secret (base64-encoded)
-      # and set KEYSTORE_BASE64, KEYSTORE_ALIAS, KEYSTORE_PASS in repo secrets.
-      # For debug builds: we generate a throwaway keystore on-the-fly.
+      # Secrets cannot be referenced in step `if:` conditions.
+      # We pass them as env vars and branch inside the shell script instead.
+      # Optional repo secrets: KEYSTORE_BASE64 (base64 .jks), KEYSTORE_ALIAS, KEYSTORE_PASS
+      # If absent a throwaway debug keystore is generated automatically.
 
-      - name: Prepare release keystore (from secret)
-        if: secrets.KEYSTORE_BASE64 != ''
+      - name: Prepare keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > $HOME/release.keystore
-        # Failure here is non-fatal; we fall through to debug keystore below
-
-      - name: Generate debug keystore (fallback)
-        run: |
-          if [ ! -f "$HOME/release.keystore" ]; then
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
+            echo "KS_FILE=$HOME/release.keystore" >> "$GITHUB_ENV"
+            echo "KS_USER=$KEYSTORE_ALIAS"        >> "$GITHUB_ENV"
+            echo "KS_PASS=$KEYSTORE_PASS"         >> "$GITHUB_ENV"
+          else
             keytool -genkey -v \
               -keystore "$HOME/debug.keystore" \
               -alias androiddebugkey \
@@ -101,6 +103,9 @@ jobs:
               -validity 10000 \
               -storepass android -keypass android \
               -dname "CN=Android Debug,O=Android,C=US"
+            echo "KS_FILE=$HOME/debug.keystore" >> "$GITHUB_ENV"
+            echo "KS_USER=androiddebugkey"      >> "$GITHUB_ENV"
+            echo "KS_PASS=android"              >> "$GITHUB_ENV"
           fi
 
       # ── 6. Godot editor settings ─────────────────────────────────────────────
@@ -109,24 +114,12 @@ jobs:
       - name: Write Godot editor settings
         run: |
           mkdir -p "$HOME/.config/godot"
-
-          # Decide which keystore to use
-          if [ -f "$HOME/release.keystore" ]; then
-            KS_PATH="$HOME/release.keystore"
-            KS_USER="${{ secrets.KEYSTORE_ALIAS }}"
-            KS_PASS="${{ secrets.KEYSTORE_PASS }}"
-          else
-            KS_PATH="$HOME/debug.keystore"
-            KS_USER="androiddebugkey"
-            KS_PASS="android"
-          fi
-
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
           export/android/android_sdk_path = "$ANDROID_SDK_ROOT"
-          export/android/debug_keystore = "$KS_PATH"
+          export/android/debug_keystore = "$KS_FILE"
           export/android/debug_keystore_user = "$KS_USER"
           export/android/debug_keystore_pass = "$KS_PASS"
           EOF
