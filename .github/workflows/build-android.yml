@@ -1,6 +1,5 @@
 name: Build Android APK
 
-# Triggers: push on dev branch or main, version tags, and manual dispatch
 on:
   push:
     branches:
@@ -15,27 +14,28 @@ on:
 env:
   GODOT_VERSION: "4.3"
   EXPORT_PRESET: "Android"
+  APK_RAW: "build/android/slidee_raw.apk"
   APK_PATH: "build/android/slidee.apk"
+  BUILD_TOOLS: "34.0.0"
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────────
   export-android:
     name: Export Android APK
     runs-on: ubuntu-22.04
 
     steps:
-      # ── 1. Source ────────────────────────────────────────────────────────────
+      # ── 1. Source ──────────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Java (required by Android SDK tools) ──────────────────────────────
+      # ── 2. Java ────────────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: "17"
           distribution: temurin
 
-      # ── 3. Android SDK ───────────────────────────────────────────────────────
+      # ── 3. Android SDK ─────────────────────────────────────────────────────────
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -43,10 +43,10 @@ jobs:
         run: |
           sdkmanager --sdk_root="$ANDROID_SDK_ROOT" \
             "platforms;android-34" \
-            "build-tools;34.0.0" \
+            "build-tools;${{ env.BUILD_TOOLS }}" \
             "ndk;23.2.8568313"
 
-      # ── 4. Godot binaries (cached) ───────────────────────────────────────────
+      # ── 4. Godot (cached) ──────────────────────────────────────────────────────
       - name: Cache Godot & export templates
         id: cache-godot
         uses: actions/cache@v4
@@ -54,7 +54,7 @@ jobs:
           path: |
             /usr/local/bin/godot
             ~/.local/share/godot/export_templates/
-          key: godot-${{ env.GODOT_VERSION }}-stable-v1
+          key: godot-${{ env.GODOT_VERSION }}-stable-v2
 
       - name: Download Godot headless
         if: steps.cache-godot.outputs.cache-hit != 'true'
@@ -78,11 +78,10 @@ jobs:
           mv /tmp/templates \
              ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
 
-      # ── 5. Keystore ──────────────────────────────────────────────────────────
-      # Secrets cannot be referenced in step `if:` conditions.
-      # We pass them as env vars and branch inside the shell script instead.
-      # Optional repo secrets: KEYSTORE_BASE64 (base64 .jks), KEYSTORE_ALIAS, KEYSTORE_PASS
-      # If absent a throwaway debug keystore is generated automatically.
+      # ── 5. Keystore ────────────────────────────────────────────────────────────
+      # secrets.* cannot be used in step `if:` — we test env vars in bash instead.
+      # Provide KEYSTORE_BASE64 / KEYSTORE_ALIAS / KEYSTORE_PASS as repo secrets
+      # for a real release key. Otherwise a throwaway debug key is generated.
 
       - name: Prepare keystore
         env:
@@ -91,68 +90,95 @@ jobs:
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/release.keystore"
-            echo "KS_FILE=$HOME/release.keystore" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_BASE64" | base64 -d > "$HOME/signing.keystore"
+            echo "KS_FILE=$HOME/signing.keystore" >> "$GITHUB_ENV"
             echo "KS_USER=$KEYSTORE_ALIAS"        >> "$GITHUB_ENV"
             echo "KS_PASS=$KEYSTORE_PASS"         >> "$GITHUB_ENV"
           else
-            keytool -genkey -v \
-              -keystore "$HOME/debug.keystore" \
+            keytool -genkeypair -v \
+              -keystore "$HOME/signing.keystore" \
               -alias androiddebugkey \
               -keyalg RSA -keysize 2048 \
               -validity 10000 \
               -storepass android -keypass android \
               -dname "CN=Android Debug,O=Android,C=US"
-            echo "KS_FILE=$HOME/debug.keystore" >> "$GITHUB_ENV"
-            echo "KS_USER=androiddebugkey"      >> "$GITHUB_ENV"
-            echo "KS_PASS=android"              >> "$GITHUB_ENV"
+            echo "KS_FILE=$HOME/signing.keystore" >> "$GITHUB_ENV"
+            echo "KS_USER=androiddebugkey"        >> "$GITHUB_ENV"
+            echo "KS_PASS=android"                >> "$GITHUB_ENV"
           fi
 
-      # ── 6. Godot editor settings ─────────────────────────────────────────────
-      # Godot reads SDK path and keystore from editor_settings-4.tres, not env vars.
+      # ── 6. Godot editor settings ───────────────────────────────────────────────
+      # IMPORTANT: printf avoids the leading-whitespace bug caused by YAML-indented
+      # heredocs (<<EOF in an indented run: block prefixes every line with spaces,
+      # making the .tres file unparseable and silently disabling keystore config).
 
       - name: Write Godot editor settings
         run: |
           mkdir -p "$HOME/.config/godot"
-          cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
-          [gd_resource type="EditorSettings" format=3]
+          printf '%s\n' \
+            '[gd_resource type="EditorSettings" format=3]' \
+            '' \
+            '[resource]' \
+            "export/android/android_sdk_path = \"$ANDROID_SDK_ROOT\"" \
+            "export/android/debug_keystore = \"$KS_FILE\"" \
+            "export/android/debug_keystore_user = \"$KS_USER\"" \
+            "export/android/debug_keystore_pass = \"$KS_PASS\"" \
+            > "$HOME/.config/godot/editor_settings-4.tres"
+          echo "=== editor_settings-4.tres ==="
+          cat "$HOME/.config/godot/editor_settings-4.tres"
 
-          [resource]
-          export/android/android_sdk_path = "$ANDROID_SDK_ROOT"
-          export/android/debug_keystore = "$KS_FILE"
-          export/android/debug_keystore_user = "$KS_USER"
-          export/android/debug_keystore_pass = "$KS_PASS"
-          EOF
-
-      # ── 7. Export ────────────────────────────────────────────────────────────
+      # ── 7. Export (raw, possibly unsigned) ────────────────────────────────────
       - name: Create output directory
         run: mkdir -p build/android
 
-      - name: Export APK (debug)
-        if: "!startsWith(github.ref, 'refs/tags/v')"
+      - name: Export APK with Godot
         run: |
-          godot --headless --export-debug "${{ env.EXPORT_PRESET }}" \
-            "${{ env.APK_PATH }}" 2>&1 | tee godot_export.log
-          echo "--- Export log ---"
+          # Export to a _raw file; we will re-sign it ourselves in the next step.
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            EXPORT_CMD="--export-release"
+          else
+            EXPORT_CMD="--export-debug"
+          fi
+          godot --headless $EXPORT_CMD "${{ env.EXPORT_PRESET }}" \
+            "${{ env.APK_RAW }}" 2>&1 | tee godot_export.log
+          echo "--- Godot export log ---"
           cat godot_export.log
-          test -f "${{ env.APK_PATH }}" || (echo "APK not found!" && exit 1)
+          test -f "${{ env.APK_RAW }}" || (echo "ERROR: APK not produced by Godot" && exit 1)
+          ls -lh "${{ env.APK_RAW }}"
 
-      - name: Export APK (release, on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+      # ── 8. Zipalign + sign with apksigner ─────────────────────────────────────
+      # Godot's internal signing can be unreliable in headless CI mode.
+      # We always re-sign explicitly: zipalign first (mandatory before V2/V3
+      # signing), then apksigner which embeds a V1+V2+V3 signature block.
+
+      - name: Zipalign
         run: |
-          godot --headless --export-release "${{ env.EXPORT_PRESET }}" \
-            "${{ env.APK_PATH }}" 2>&1 | tee godot_export.log
-          echo "--- Export log ---"
-          cat godot_export.log
-          test -f "${{ env.APK_PATH }}" || (echo "APK not found!" && exit 1)
+          BT="$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS }}"
+          "$BT/zipalign" -f -v 4 "${{ env.APK_RAW }}" "${{ env.APK_PATH }}"
+          echo "Zipalign done — $(ls -lh ${{ env.APK_PATH }} | awk '{print $5}')"
 
-      # ── 8. APK info ──────────────────────────────────────────────────────────
-      - name: Print APK size
+      - name: Sign with apksigner
+        run: |
+          BT="$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS }}"
+          "$BT/apksigner" sign \
+            --ks           "$KS_FILE" \
+            --ks-key-alias "$KS_USER" \
+            --ks-pass      "pass:$KS_PASS" \
+            --key-pass     "pass:$KS_PASS" \
+            "${{ env.APK_PATH }}"
+
+      - name: Verify APK signature
+        run: |
+          BT="$ANDROID_SDK_ROOT/build-tools/${{ env.BUILD_TOOLS }}"
+          "$BT/apksigner" verify --verbose --print-certs "${{ env.APK_PATH }}"
+
+      # ── 9. Summary ────────────────────────────────────────────────────────────
+      - name: APK info
         run: |
           ls -lh "${{ env.APK_PATH }}"
           echo "SHA256: $(sha256sum ${{ env.APK_PATH }} | awk '{print $1}')"
 
-      # ── 9. Upload artifact ───────────────────────────────────────────────────
+      # ── 10. Upload artifact ───────────────────────────────────────────────────
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -160,7 +186,7 @@ jobs:
           path: ${{ env.APK_PATH }}
           retention-days: 30
 
-      # ── 10. GitHub Release (on version tag) ──────────────────────────────────
+      # ── 11. GitHub Release (version tags only) ────────────────────────────────
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
