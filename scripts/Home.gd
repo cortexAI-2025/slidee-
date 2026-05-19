@@ -25,6 +25,11 @@ func _ready() -> void:
 	_picker.image_ready.connect(_on_image_ready)
 	_picker.cancelled.connect(_on_picker_cancelled)
 
+	# Request media permissions early so the system dialog appears at launch
+	# rather than when the user taps the button.
+	if OS.get_name() == "Android":
+		OS.request_permissions()
+
 # ── UI construction ────────────────────────────────────────────────────────────
 
 func _build_ui() -> void:
@@ -167,7 +172,10 @@ func _make_button(label_text: String, bg: Color, fg: Color) -> Button:
 # ── Event handlers ─────────────────────────────────────────────────────────────
 
 func _on_select_pressed() -> void:
-	_set_status("Opening gallery…")
+	if OS.get_name() == "Android":
+		_set_status("Opening gallery…  (grant access if prompted)")
+	else:
+		_set_status("Opening gallery…")
 	_picker.pick_image()
 
 func _on_picker_cancelled() -> void:
