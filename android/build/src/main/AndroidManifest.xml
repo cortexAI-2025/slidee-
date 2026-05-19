@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.slidee.puzzle">
+
+    <!-- Required for reading images from gallery on Android 13+ -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Fallback for Android 12 and below -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <application
+        android:label="@string/godot_project_name_string"
+        android:allowBackup="false"
+        android:isGame="true"
+        android:hasFragileUserData="false"
+        android:requestLegacyExternalStorage="false">
+
+        <activity
+            android:name=".GodotApp"
+            android:label="@string/godot_project_name_string"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|keyboardHidden|screenSize|smallestScreenSize|density|keyboard|navigation|screenLayout|uiMode"
+            android:resizeableActivity="false"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

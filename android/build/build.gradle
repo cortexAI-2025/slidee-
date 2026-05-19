@@ -1,0 +1,23 @@
+// Minimal Gradle wrapper that Godot's build system merges with its own.
+// The engine generates the full build.gradle at export time; this file
+// provides project-specific overrides only.
+
+android {
+    defaultConfig {
+        applicationId "com.slidee.puzzle"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    // No third-party deps required — plugin uses Android SDK only
+}

@@ -1,0 +1,14 @@
+# Godot editor generated
+.godot/
+*.translation
+
+# Android build outputs
+android/build/.gradle/
+android/build/build/
+android/build/libs/
+*.apk
+*.aab
+
+# OS
+.DS_Store
+Thumbs.db
